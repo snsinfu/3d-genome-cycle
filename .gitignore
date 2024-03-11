@@ -1,3 +1,30 @@
 .*
 _*
-!.gitignore
+!.git*
+
+!__init__.py
+!__main__.py
+
+
+# Artifacts
+*.o
+src/simulation/prepare
+src/simulation/anatelophase
+src/simulation/interphase
+
+# Data
+*.gz
+*.tsv
+*.cool
+*.mcool
+*.json
+*.h5
+
+# Bundled data
+!example/config.json
+!example/GM12878/chains.tsv
+!example/GM12878/config.json
+!example/GM12878/nci.tsv
+!example/CH12.LX/chains.tsv
+!example/CH12.LX/config.json
+!example/CH12.LX/nci.tsv

@@ -1,0 +1,32 @@
+name: 3d-genome-sim
+
+channels:
+  - conda-forge
+  - bioconda
+
+dependencies:
+  - nodejs
+  - pip
+  - python=3.10
+
+  # C++
+  - cxx-compiler
+  - make
+
+  # Numerics and data handling
+  - h5py=3
+  - hdf5=1.*=nompi*
+  - numpy=1
+  - pandas=1
+  - python-duckdb=0.10
+  - scipy=1
+
+  # Biology
+  - cooler=0.9
+  - gsd=3
+
+  # Notebook and visualization
+  - ipywidgets
+  - jupyterlab=4
+  - matplotlib=3
+  - tqdm

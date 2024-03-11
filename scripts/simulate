@@ -1,0 +1,47 @@
+#!/bin/sh -eu
+
+name="$(basename "$0")"
+
+show_usage() {
+    cat << END
+usage: ${name} [-s seed] -o out.h5 config.json chains.tsv
+END
+}
+
+project="$(cd "$(dirname "$0")/.." && pwd)"
+seed=0
+output=
+
+while getopt ch s:o:h; do
+    case "${ch}" in
+    s)  seed="${OPTARG}"
+        ;;
+    o)  output="${OPTARG}"
+        ;;
+    h)  show_usage
+        exit 0
+        ;;
+    *)  show_usage >&2
+        exit 1
+    esac
+done
+
+shift $((OPTIND - 1))
+
+if $# != 2; then
+    show_usage >&2
+    exit 1
+fi
+
+config="$1"
+chains="$2"
+
+if [ "${output}" = "" ]; then
+    echo "Output file (-o output.h5) must be set" >&2
+    exit 1
+fi
+
+"${project}/src/simulation/prepare"      "${output}" "${config}" "${chains}"
+"${project}/src/simulation/anatelophase" "${output}"
+"${project}/scripts/refine"              "${output}"
+"${project}/src/simulation/interphase"   "${output}"
