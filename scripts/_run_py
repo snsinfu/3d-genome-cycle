@@ -1,0 +1,7 @@
+#!/bin/sh -eu
+project="$(cd "$(dirname "$0")/.." && pwd)"
+env_file="${project}/environment.yml"
+env_name="$(awk '$1 == "name:" { print $2 }' "${env_file}")"
+script_name="$(basename "$0")"
+script_file="${project}/src/${script_name}.py"
+conda run -n "${env_name}" --no-capture-output python "${script_file}" "$@"
