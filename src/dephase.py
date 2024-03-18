@@ -6,7 +6,6 @@ import duckdb
 import pandas as pd
 import tqdm
 
-
 from pkg.common.args import remove_none
 from pkg.common.cli import invoke_main
 
@@ -45,13 +44,13 @@ def main(
         assembly=clr.info.get("genome-assembly"),
     )
 
-    clr = cooler.Cooler(output)
-    LOG.info(">> Stored %d pixels", len(clr.pixels()))
+    output_clr = cooler.Cooler(output)
+    LOG.info(">> Stored %d pixels", len(output_clr.pixels()))
 
     # Optional balancing. This may also take a while.
     if not no_balancing:
         LOG.info("Balancing contact matrix")
-        cooler.balance_cooler(clr, store=True)
+        cooler.balance_cooler(output_clr, store=True)
 
 
 def infer_chromosome_copies(chain_names: list[str]) -> dict[str, list[str]]:

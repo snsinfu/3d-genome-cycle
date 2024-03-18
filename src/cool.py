@@ -1,5 +1,6 @@
 import argparse
 import logging
+import io
 import json
 
 import cooler
@@ -23,33 +24,41 @@ def main(
     frames: list[slice] | None = None,
     input_sims: list[str],
 ):
-    logging.basicConfig(level=logging.INFO)
-
     with h5py.File(input_sims[0], "r") as store:
-        # FIXME
-        assembly = "GRCh38"
-        bin_size = 100_000
+        # ?
+        assembly = None
 
         # Load chain configurations
         metadata = store["metadata"]
-        n_bins = len(metadata["particle_types"])
-        chain_ranges = metadata["chromosome_ranges"]
-        chain_maps = json.loads(chain_ranges.attrs["keys"])
-        chain_ranges = chain_ranges[:]
 
-    # Define bins. Homologous chromosomes are treated as distinct chains, and
-    # the nucleolar particles are treated as bins on a virtual nucleolar chain.
+        n_bins = len(metadata["particle_types"])
+        chain_names = [name.decode() for name in metadata["chain_names"]]
+        chain_ranges = metadata["chain_ranges"][:]
+
+        # Copy chromosomal bins from the simulation input (chains.tsv).
+        chain_bins = pd.read_csv(
+            io.StringIO(metadata["chains_source"][()].decode()),
+            sep="\t",
+        )
+
+    bin_start_coords = chain_bins["start"].values
+    bin_end_coords = chain_bins["end"].values
+    bin_size = np.max(bin_end_coords - bin_start_coords)
+
+    # Define bins. Homologous chromosomes are treated as distinct chains (as in
+    # the chains.tsv simulation input), and the nucleolar particles are treated
+    # as bins on a virtual nucleolar chain, giving NAD contacts. The NAD
+    # contacts are trimmed out in the dephase.py script.
     bins_chrom = np.empty(n_bins, dtype=object)
     bins_start = np.empty(n_bins, dtype=int)
     bins_end = np.empty(n_bins, dtype=int)
     chains_end = chain_ranges.max()
 
-    for name, index in chain_maps.items():
-        start, end = chain_ranges[index]
+    for name, (start, end) in zip(chain_names, chain_ranges):
         indices = np.arange(end - start)
         bins_chrom[start:end] = name
-        bins_start[start:end] = indices * bin_size
-        bins_end[start:end] = (indices + 1) * bin_size
+        bins_start[start:end] = bin_start_coords[start:end]
+        bins_end[start:end] = bin_end_coords[start:end]
 
     indices = np.arange(n_bins - chains_end)
     bins_chrom[chains_end:] = NUCLEOLAR_CHAIN
@@ -72,26 +81,29 @@ def main(
             LOG.info("Ingesting from %s", input_sim)
             try:
                 with h5py.File(input_sim, "r") as store:
-                    snapshots = store["snapshots"]["interphase"]
-                    steps = snapshots[".steps"][:]
+                    snapshots = store["stages"]["interphase"]
+                    steps = [step.decode() for step in snapshots[".steps"]]
 
-                    steps_to_use = np.concatenate(
-                        [steps[frame_slice] for frame_slice in frames]
-                    )
+                    steps_to_use = steps
+                    if frames is not None:
+                        steps_to_use = np.concatenate(
+                            [steps[frame_slice] for frame_slice in frames]
+                        )
 
                     for i in tqdm.trange(len(steps_to_use), leave=False):
                         step = steps_to_use[i]
 
+                        # Contact maps are thinned out in the simulation
+                        # output file because of size.
                         sample = snapshots[step]
-                        if "contact_map" not in sample:
+                        if "contacts" not in sample:
                             continue
-
-                        contact_map = sample["contact_map"][:]
+                        contacts = sample["contacts"][:]
 
                         yield {
-                            "bin1_id": contact_map[:, 0],
-                            "bin2_id": contact_map[:, 1],
-                            "count": contact_map[:, 2],
+                            "bin1_id": contacts[:, 0],
+                            "bin2_id": contacts[:, 1],
+                            "count": contacts[:, 2],
                         }
             except Exception as ex:
                 LOG.warning(">> Skipping: %s", ex)

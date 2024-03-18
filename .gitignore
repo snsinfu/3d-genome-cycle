@@ -2,6 +2,7 @@
 _*
 !.git*
 
+!*.example
 !__init__.py
 !__main__.py
 !/scripts/_run_py
@@ -12,6 +13,9 @@ _*
 /src/simulation/anatelophase
 /src/simulation/interphase
 
+# Junks
+Untitled*.ipynb
+
 # Data
 *.gz
 *.tsv
@@ -19,12 +23,16 @@ _*
 *.mcool
 *.json
 *.h5
+*.gsd
 
 # Bundled data
 !/example/config.json
+
 !/example/GM12878/chains.tsv
 !/example/GM12878/config.json
 !/example/GM12878/nci.tsv
+
 !/example/CH12.LX/chains.tsv
 !/example/CH12.LX/config.json
 !/example/CH12.LX/nci.tsv
+

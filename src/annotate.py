@@ -78,9 +78,12 @@ def main(
         for i in range(chain_length):
             z_score = (scores[i] - center) / scale
             chrom_type = determine_chromatin_type(z_score, tristate, tags[i])
+            # chrom_type = determine_chromatin_type(z_score, tristate, tags[i])
 
             tags[i].append(CHROM_TYPE_TAGS[chrom_type])
             parameters[i] = CHROM_TYPE_PARAMETERS[chrom_type]
+            #tags[i].append(CHROM_TYPE_TAGS[chrom_type])
+            parameters[i] = CHROM_TYPE_PARAMETERS[determine_chromatin_type(z_score, tristate)]
 
             # Remove "het" as it is not used and also might be confusing.
             if "het" in tags[i]:
@@ -98,7 +101,6 @@ def main(
         track.to_csv(output, sep="\t", float_format="%g", index=False, header=need_header)
         need_header = False
         output.flush()
-
 
 
 class AnnotScheme(enum.Enum):

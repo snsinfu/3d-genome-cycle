@@ -1,0 +1,9 @@
+# Setting for building Rosetta-compatible x64 executables on Apple Sillicon
+# macOS; note the absence of -mavx. This is useful as the conda environment
+# has to be created with CONDA_SUBDIR=osx-64 on Apple Sillicon macs because
+# Bioconda packages are not built for osx-arm64.
+OPTFLAGS = \
+  -funsafe-math-optimizations \
+  -O2 \
+  -march=x86-64-v2 \
+  -mtune=generic
