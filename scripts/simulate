@@ -43,4 +43,5 @@ fi
 
 "${project}/src/simulation/prepare" ${prepare_opts} -o "${output}" "${config}" "${chains}"
 "${project}/src/simulation/anatelophase" "${output}"
+"${project}/src/simulation/transition" interphase "${output}"
 "${project}/src/simulation/interphase" "${output}"

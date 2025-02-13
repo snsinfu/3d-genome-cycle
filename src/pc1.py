@@ -1,4 +1,5 @@
 import argparse
+import json
 import logging
 import typing
 
@@ -23,6 +24,7 @@ def main(
     cool: str,
     output: str,
     aux_output: str | None = None,
+    mask_intra: bool = False,
     use_covariance: bool = False,
     use_raw: bool = False,
 ):
@@ -45,11 +47,15 @@ def main(
         patch.trans_1[...] /= expected.inter
         patch.trans_2[...] /= expected.inter
 
-        cis_size = len(patch.cis)
-        for k in range(-cis_size + 1, cis_size):
-            diag = np.diagonal(patch.cis, k)
-            diag.setflags(write=True) # https://github.com/numpy/numpy/issues/5407
-            diag[:] /= expected.intra[abs(k)]
+        if mask_intra:
+            # Leaving bad entries as-is
+            patch.cis[np.isfinite(patch.cis)] = 1
+        else:
+            cis_size = len(patch.cis)
+            for k in range(-cis_size + 1, cis_size):
+                diag = np.diagonal(patch.cis, k)
+                diag.setflags(write=True) # https://github.com/numpy/numpy/issues/5407
+                diag[:] /= expected.intra[abs(k)]
 
     # Center columns for PCA
     LOG.info("Standardizing columns")
@@ -91,9 +97,10 @@ def main(
     LOG.info("Explained variance ratio: %.1f %%", evr * 100)
 
     aux_data = {
-        "cis_decay_profile": list(expected.intra),
+        # The default JSON encoder requires conversion from np.float32 to float
+        "explained_variance_ratio": float(evr),
+        "cis_decay_profile": [float(x) for x in expected.intra],
         "trans_contact": expected.inter,
-        "explained_variance_ratio": evr,
     }
 
     table = pd.DataFrame.from_dict({
@@ -172,7 +179,7 @@ def estimate_expected_contacts(
     with np.errstate(invalid="ignore", divide="ignore"):
         return ExpectedContacts(
             intra=(intra_sums / intra_counts),
-            inter=(inter_sum / inter_count),
+            inter=float(inter_sum / inter_count),
         )
 
 
@@ -205,6 +212,12 @@ def parse_args() -> dict:
         action="store_true",
         default=False,
         help="Diagonalize O/E covariance, not correlation, matrix",
+    )
+    arg(
+        "--mask-intra",
+        action="store_true",
+        default=False,
+        help="Mask intra-chromosomal O/E contacts by setting 1",
     )
     arg(
         "--aux-output",

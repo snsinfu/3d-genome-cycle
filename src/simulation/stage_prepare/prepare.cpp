@@ -1,16 +1,18 @@
 #include <algorithm>
 #include <iostream>
+#include <optional>
 #include <string>
 #include <vector>
 
 #include <h5.hpp>
 
 #include "../common/h5_traits.hpp"
+#include "h5_misc.hpp"
 #include "prepare.hpp"
 
 
 // Numerical code used in the "/metadata/particle_types" dataset.
-enum class particle_type
+enum class interphase_particle_type
 {
     unknown    = 0,
     a          = 1,
@@ -23,21 +25,21 @@ enum class particle_type
 };
 
 
-// Numerical code used in the "/metadata/particle_types:metaphase" dataset.
-enum class metaphase_particle_type
+// Numerical code used in the "/metadata/particle_types:mitotic_phase" dataset.
+enum class mitotic_particle_type
 {
-    unknown    = 0,
-    arm        = 1,
-    centromere = 2,
+    unknown     = 0,
+    arm         = 1,
+    kinetochore = 2,
 };
 
 
 // Structure holding the parameters of a simulated particle.
-struct particle_data
+struct interphase_particle_data
 {
-    double        a_factor = 0;
-    double        b_factor = 0;
-    particle_type type     = particle_type::unknown;
+    double                   a_factor = 0;
+    double                   b_factor = 0;
+    interphase_particle_type type     = interphase_particle_type::unknown;
 };
 
 
@@ -45,17 +47,18 @@ struct particle_data
 // constitutes a single chromosome in a simulation.
 struct chain_assignment
 {
-    std::string name;
-    std::size_t start = 0;
-    std::size_t end   = 0;
+    std::string                name;
+    std::size_t                start = 0;
+    std::size_t                end   = 0;
+    std::optional<std::size_t> kinetochore;
 };
 
 
 // Trajectory file preparation pipeline.
-class preparation_pipeline
+class init_pipeline
 {
 public:
-    preparation_pipeline(
+    init_pipeline(
         h5::file& store,
         simulation_config const& config,
         chain_definitions const& chains,
@@ -66,30 +69,49 @@ public:
 private:
     void define_chains();
     void define_nucleolar_particles();
-    void define_metaphase_chains();
+    void define_anatelophase_chains();
+    void define_prometaphase_chains();
 
     void write_inputs();
     void write_interphase_particles();
-    void write_metaphase_particles();
+    void write_anatelophase_particles();
+    void write_prometaphase_particles();
     void write_seeds();
-    void write_stages();
 
 private:
-    h5::file&                               _store;
-    simulation_config const                 _config;
-    chain_definitions const                 _chains;
-    std::uint32_t const                     _master_seed;
-    std::vector<particle_data>              _particles;
-    std::vector<chain_assignment>           _chain_assignments;
-    std::vector<std::size_t>                _nor_indices;
-    std::vector<std::array<std::size_t, 2>> _nucleolar_bonds;
-    std::vector<metaphase_particle_type>    _metaphase_particle_types;
-    std::vector<chain_assignment>           _metaphase_chain_assignments;
-    std::vector<std::size_t>                _metaphase_kinetochore_indices;
+    struct interphase_preparation
+    {
+        std::vector<interphase_particle_data>   particles;
+        std::vector<chain_assignment>           chains;
+        std::vector<std::size_t>                nor_indices;
+        std::vector<std::array<std::size_t, 2>> nucleolar_bonds;
+    };
+
+    struct anatelophase_preparation
+    {
+        std::vector<mitotic_particle_type> particles;
+        std::vector<chain_assignment>      chains;
+    };
+
+    struct prometaphase_preparation
+    {
+        std::vector<mitotic_particle_type>      particles;
+        std::vector<chain_assignment>           chains;
+        std::vector<std::array<std::size_t, 2>> sister_chromatids;
+        std::array<md::point, 2>                pole_positions;
+    };
+
+    h5::file&                _store;
+    simulation_config const  _config;
+    chain_definitions const  _chains;
+    std::uint32_t const      _master_seed;
+    interphase_preparation   _interphase;
+    anatelophase_preparation _anatelophase;
+    prometaphase_preparation _prometaphase;
 };
 
 
-preparation_pipeline::preparation_pipeline(
+init_pipeline::init_pipeline(
     h5::file& store,
     simulation_config const& config,
     chain_definitions const& chains,
@@ -104,17 +126,18 @@ preparation_pipeline::preparation_pipeline(
 
 
 void
-preparation_pipeline::run()
+init_pipeline::run()
 {
     define_chains();
     define_nucleolar_particles();
-    define_metaphase_chains();
+    define_anatelophase_chains();
+    define_prometaphase_chains();
 
     write_inputs();
     write_interphase_particles();
-    write_metaphase_particles();
+    write_anatelophase_particles();
+    write_prometaphase_particles();
     write_seeds();
-    write_stages();
 }
 
 
@@ -144,27 +167,27 @@ namespace
 
 // Defines chromosomal chains in interphase simulation.
 void
-preparation_pipeline::define_chains()
+init_pipeline::define_chains()
 {
     // Input:  (none)
-    // Output: _particles, _nor_indices, _chain_assignments
+    // Output: _interphase.{particles, nor_indices, chains}
 
-    std::vector<std::pair<std::string, particle_type>> const tag_type_map = {
-        {"anor", particle_type::active_nor},
-        {"bnor", particle_type::silent_nor},
-        {"cen", particle_type::centromere},
-        {"A", particle_type::a},
-        {"B", particle_type::b},
-        {"u", particle_type::u},
+    std::vector<std::pair<std::string, interphase_particle_type>> const tag_type_map = {
+        {"anor", interphase_particle_type::active_nor},
+        {"bnor", interphase_particle_type::silent_nor},
+        {"cen", interphase_particle_type::centromere},
+        {"A", interphase_particle_type::a},
+        {"B", interphase_particle_type::b},
+        {"u", interphase_particle_type::u},
     };
 
     for (auto const& chain : _chains.chains) {
-        auto const chain_start = _particles.size();
+        auto const chain_start = _interphase.particles.size();
         auto const chain_end = chain_start + chain.beads.size();
 
         for (auto const& bead : chain.beads) {
-            auto const bead_index = _particles.size();
-            auto bead_type = particle_type::unknown;
+            auto const bead_index = _interphase.particles.size();
+            auto bead_type = interphase_particle_type::unknown;
 
             for (auto const& [tag, type] : tag_type_map) {
                 if (check_tag(bead.tags, tag)) {
@@ -173,21 +196,22 @@ preparation_pipeline::define_chains()
                 }
             }
 
-            if (bead_type == particle_type::active_nor) {
-                _nor_indices.push_back(bead_index);
+            if (bead_type == interphase_particle_type::active_nor) {
+                _interphase.nor_indices.push_back(bead_index);
             }
 
-            _particles.push_back({
+            _interphase.particles.push_back({
                 .a_factor = bead.a_factor,
                 .b_factor = bead.b_factor,
                 .type     = bead_type,
             });
         }
 
-        _chain_assignments.push_back({
-            .name  = chain.name,
-            .start = chain_start,
-            .end   = chain_end,
+        _interphase.chains.push_back({
+            .name        = chain.name,
+            .start       = chain_start,
+            .end         = chain_end,
+            .kinetochore = {},
         });
     }
 }
@@ -195,75 +219,44 @@ preparation_pipeline::define_chains()
 
 // Defines nucleolar particles in interphase simulation.
 void
-preparation_pipeline::define_nucleolar_particles()
+init_pipeline::define_nucleolar_particles()
 {
-    // Input:  _particles, _nor_indices
-    // Output: _particles, _nucleolar_bonds
+    // Input:  _interphase.{particles, nor_indices}
+    // Output: _interphase.{particles, nucleolar_bonds}
 
-    for (auto const& nor_index : _nor_indices) {
+    for (auto const& nor_index : _interphase.nor_indices) {
         for (std::size_t i = 0; i < _config.interphase.nucleolus_bead_count; i++) {
-            auto const nucleolus_index = _particles.size();
-            _particles.push_back({
+            auto const nucleolus_index = _interphase.particles.size();
+            _interphase.particles.push_back({
                 .a_factor = _config.interphase.nucleolus_ab_factor.a,
                 .b_factor = _config.interphase.nucleolus_ab_factor.b,
-                .type     = particle_type::nucleolus,
+                .type     = interphase_particle_type::nucleolus,
             });
-            _nucleolar_bonds.push_back({ nor_index, nucleolus_index });
+            _interphase.nucleolar_bonds.push_back({ nor_index, nucleolus_index });
         }
     }
 }
 
 
-namespace
-{
-    // Determines the half-open window [start, end) of given size around
-    // `center`, clipping the lower and upper ends to given bounds.
-    std::array<std::size_t, 2>
-    define_clipped_window(
-        std::size_t center,
-        std::size_t window,
-        std::size_t lower_bound,
-        std::size_t upper_bound
-    )
-    {
-        auto const lower_window = window / 2;
-        auto const upper_window = window - lower_window;
-
-        auto const lower =
-            (lower_bound + lower_window > center)
-                ? lower_bound
-                : center - lower_window;
-
-        auto const upper =
-            (center + upper_window > upper_bound)
-                ? upper_bound
-                : center + upper_window;
-
-        return { lower, upper };
-    }
-}
-
-
-// Defines coarse-grained chromosomal chains in metaphase simulation.
+// Defines coarse-grained chromosomal chains in anatelophase simulation.
 void
-preparation_pipeline::define_metaphase_chains()
+init_pipeline::define_anatelophase_chains()
 {
-    // Input:  _particles, _chain_assignments
-    // Output: _metaphase_particle_types, _metaphase_chain_assignments, _metaphase_kinetochore_indices
+    // Input:  _interphase.{particles, chains}
+    // Output: _anatelophase.{particle_types, chains}
 
-    auto const coarse_graining = _config.anatelophase.coarse_graining;
-    auto const dragged_beads = _config.anatelophase.dragged_beads;
+    auto const coarse_graining = _config.mitotic_phase.coarse_graining;
 
     // Identify the centromeric region [start, end) of each chain.
     std::vector<std::array<std::size_t, 2>> centromere_ranges;
 
-    for (auto const& assign : _chain_assignments) {
+    for (auto const& assign : _interphase.chains) {
         std::size_t start = assign.start;
         std::size_t end = assign.end;
         bool seen = false;
 
         for (std::size_t i = assign.start; i < assign.end; i++) {
-            if (_particles[i].type == particle_type::centromere) {
+            if (_interphase.particles[i].type == interphase_particle_type::centromere) {
                 if (!seen) {
                     start = i;
                     seen = true;
@@ -281,53 +274,108 @@ preparation_pipeline::define_metaphase_chains()
         centromere_ranges.push_back({ start, end });
     }
 
-    // Define metaphase chains by coarse-graining the interphase ones.
+    // Define anatelophase chains by coarse-graining the interphase ones.
 
-    for (std::size_t chain_index = 0; chain_index < _chain_assignments.size(); chain_index++) {
-        auto const& assign = _chain_assignments[chain_index];
+    for (std::size_t chain_index = 0; chain_index < _interphase.chains.size(); chain_index++) {
+        auto const& assign = _interphase.chains[chain_index];
         auto const length = assign.end - assign.start;
 
         auto const coarse_length = length / coarse_graining;
-        auto const coarse_chain_start = _metaphase_particle_types.size();
+        auto const coarse_chain_start = _anatelophase.particles.size();
         auto const coarse_chain_end = coarse_chain_start + coarse_length;
 
-        // Map centromere to `dragged_beads` coarse-grained beads around the
-        // midpoint of the centromeric region of the original chain.
+        // Model kinetochore-attached chromosomal region as a single bead at
+        // the midpoint of the centromeric region of the original chain.
         auto const [cen_start, cen_end] = centromere_ranges[chain_index];
         auto const centromere_midpoint = (cen_start + cen_end) / 2;
+        auto const kinetochore_offset = (centromere_midpoint - assign.start) / coarse_graining;
 
-        auto const kinetochore_center = (centromere_midpoint - assign.start) / coarse_graining;
-        auto const [kinetochore_start, kinetochore_end] = define_clipped_window(
-            kinetochore_center, dragged_beads, 0, coarse_length
-        );
+        std::optional<std::size_t> kinetochore_index;
 
         for (std::size_t bin = 0; bin < coarse_length; bin++) {
-            auto const bead_index = _metaphase_particle_types.size();
+            auto const bead_index = _anatelophase.particles.size(); // next index
 
-            auto type = metaphase_particle_type::arm;
-            if (bin >= kinetochore_start && bin < kinetochore_end) {
-                type = metaphase_particle_type::centromere;
-                _metaphase_kinetochore_indices.push_back(bead_index);
+            auto type = mitotic_particle_type::arm;
+            if (bin == kinetochore_offset) {
+                type = mitotic_particle_type::kinetochore;
+                kinetochore_index = bead_index;
             }
 
-            _metaphase_particle_types.push_back(type);
+            _anatelophase.particles.push_back(type);
         }
 
-        _metaphase_chain_assignments.push_back({
-            .name  = assign.name,
-            .start = coarse_chain_start,
-            .end   = coarse_chain_end,
+        _anatelophase.chains.push_back({
+            .name        = assign.name,
+            .start       = coarse_chain_start,
+            .end         = coarse_chain_end,
+            .kinetochore = kinetochore_index,
         });
     }
 }
 
 
+// Defines coarse-grained chromosomal chains in anatelophase simulation.
+void
+init_pipeline::define_prometaphase_chains()
+{
+    // Input:  _anatelophase.{particles, chains}
+    // Output: _prometaphase.{particles, chains, sister_chromatids, pole_positions}
+
+    std::size_t const anatelo_chain_count = _anatelophase.chains.size();
+    for (std::size_t i = 0; i < anatelo_chain_count; i++) {
+        auto const target_chromatid = 2 * i;
+        auto const sister_chromatid = target_chromatid + 1;
+        _prometaphase.sister_chromatids.push_back({ target_chromatid, sister_chromatid });
+    }
+
+    std::string const sister_suffix = "-copy";
+    for (auto const& anatelo_assign : _anatelophase.chains) {
+        auto const chain_length = anatelo_assign.end - anatelo_assign.start;
+        auto const kinetochore_offset = *anatelo_assign.kinetochore - anatelo_assign.start;
+
+        auto const target_start = anatelo_assign.start * 2;
+        auto const target_end = target_start + chain_length;
+        auto const target_kinetochore = target_start + kinetochore_offset;
+
+        auto const sister_start = target_end;
+        auto const sister_end = sister_start + chain_length;
+        auto const sister_kinetochore = sister_start + kinetochore_offset;
+
+        _prometaphase.chains.push_back({
+            .name        = anatelo_assign.name,
+            .start       = target_start,
+            .end         = target_end,
+            .kinetochore = target_kinetochore,
+        });
+
+        _prometaphase.chains.push_back({
+            .name        = anatelo_assign.name + sister_suffix,
+            .start       = sister_start,
+            .end         = sister_end,
+            .kinetochore = sister_kinetochore,
+        });
+
+        using std::ptrdiff_t;
+        auto const anatelo_beg = _anatelophase.particles.begin() + ptrdiff_t(anatelo_assign.start);
+        auto const anatelo_end = _anatelophase.particles.begin() + ptrdiff_t(anatelo_assign.end);
+        std::copy(anatelo_beg, anatelo_end, std::back_inserter(_prometaphase.particles));
+        std::copy(anatelo_beg, anatelo_end, std::back_inserter(_prometaphase.particles));
+    }
+
+    md::point const origin = {};
+    md::vector const pole_axis = _config.mitotic_phase.spindle_axis;
+    md::point const target_pole = origin - pole_axis;
+    md::point const sister_pole = origin + pole_axis;
+    _prometaphase.pole_positions = { target_pole, sister_pole };
+}
+
+
 // Writes input parameters under "/metadata" hierarchy.
 void
-preparation_pipeline::write_inputs()
+init_pipeline::write_inputs()
 {
-    // "/metadata/config" is the serialization of the actual parameters used in
-    // the simulation.
+    // Note: "/metadata/config" is the serialization of the actual parameters
+    // used in the simulation.
     _store.dataset<h5::u32>("/metadata/master_seed").write(_master_seed);
     _store.dataset<h5::str>("/metadata/config").write(format_simulation_config(_config));
     _store.dataset<h5::str>("/metadata/config_source").write(_config.source);
@@ -337,7 +385,7 @@ preparation_pipeline::write_inputs()
 
 // Writes paramerters for the interphase particles.
 void
-preparation_pipeline::write_interphase_particles()
+init_pipeline::write_interphase_particles()
 {
     // Store metadata datasets that define interphase particles and topology:
     // - particle_types  (*) enum
@@ -345,143 +393,172 @@ preparation_pipeline::write_interphase_particles()
     // - chain_names  (*) str
     // - chain_ranges  (*, 2) int
     // - nucleolar_bonds  (*, 2) int
+    // under the metadata groups for the interphase and relaxation stages.
 
     h5::enums<int> const particle_types_enum = {
-        {"unknown", int(particle_type::unknown)},
-        {"a", int(particle_type::a)},
-        {"b", int(particle_type::b)},
-        {"u", int(particle_type::u)},
-        {"centromere", int(particle_type::centromere)},
-        {"active_nor", int(particle_type::active_nor)},
-        {"silent_nor", int(particle_type::silent_nor)},
-        {"nucleolus", int(particle_type::nucleolus)},
+        {"unknown", int(interphase_particle_type::unknown)},
+        {"a", int(interphase_particle_type::a)},
+        {"b", int(interphase_particle_type::b)},
+        {"u", int(interphase_particle_type::u)},
+        {"centromere", int(interphase_particle_type::centromere)},
+        {"active_nor", int(interphase_particle_type::active_nor)},
+        {"silent_nor", int(interphase_particle_type::silent_nor)},
+        {"nucleolus", int(interphase_particle_type::nucleolus)},
     };
 
     std::vector<int> particle_types;
     std::vector<std::array<double, 2>> ab_factors;
-    for (auto const& particle : _particles) {
+    for (auto const& particle : _interphase.particles) {
         particle_types.push_back(int(particle.type));
         ab_factors.push_back({ particle.a_factor, particle.b_factor });
     }
 
     std::vector<std::string> chain_names;
     std::vector<std::array<std::size_t, 2>> chain_ranges;
-    for (auto const& assign : _chain_assignments) {
+    for (auto const& assign : _interphase.chains) {
         chain_names.push_back(assign.name);
         chain_ranges.push_back({ assign.start, assign.end });
     }
 
-    _store.dataset<h5::i32, 1>("/metadata/particle_types", particle_types_enum).write(particle_types);
-    _store.dataset<h5::f32, 2>("/metadata/ab_factors").write(ab_factors);
-    _store.dataset<h5::str, 1>("/metadata/chain_names").write(chain_names);
-    _store.dataset<h5::i32, 2>("/metadata/chain_ranges").write(chain_ranges);
-    _store.dataset<h5::i32, 2>("/metadata/nucleolar_bonds").write(_nucleolar_bonds);
+    auto const make_interphase_path = [](std::string const& key) {
+        return "/stages/interphase/metadata/" + key;
+    };
+    auto const make_relaxation_path = [](std::string const& key) {
+        return "/stages/relaxation/metadata/" + key;
+    };
+    _store.dataset<h5::i32, 1>(make_interphase_path("particle_types"), particle_types_enum).write(particle_types);
+    _store.dataset<h5::f32, 2>(make_interphase_path("ab_factors")).write(ab_factors);
+    _store.dataset<h5::str, 1>(make_interphase_path("chain_names")).write(chain_names);
+    _store.dataset<h5::i32, 2>(make_interphase_path("chain_ranges")).write(chain_ranges);
+    _store.dataset<h5::i32, 2>(make_interphase_path("nucleolar_bonds")).write(_interphase.nucleolar_bonds);
+
+    // The relaxation and interphase stage share some metadata.
+    auto const share_metadata = [&, this](std::string const& key) {
+        h5_link_path(_store, make_interphase_path(key), make_relaxation_path(key));
+    };
+    share_metadata("particle_types");
+    share_metadata("ab_factors");
+    share_metadata("chain_names");
+    share_metadata("chain_ranges");
+    share_metadata("nucleolar_bonds");
 }
 
 
-// Writes parameters for the metaphase particles.
+// Writes parameters for the anatelophase particles.
 void
-preparation_pipeline::write_metaphase_particles()
+init_pipeline::write_anatelophase_particles()
 {
-    // Store metadata datasets that define interphase particles and topology:
-    // - particle_types:metaphase  (*) enum
-    // - chain_ranges:metaphase  (*, 2) int
-    // - kinetochore_beads:metaphase  (*) int
+    // Store anatelophase datasets that define anatelophase particles and topology:
+    // - particle_types (*) enum
+    // - chain_names (*) str
+    // - chain_ranges (*, 2) int
+    // - kinetochore_beads (*) int
+    // under the metadata groups for the anaphase and telophase stages.
 
     h5::enums<int> const particle_types_enum = {
-        {"unknown", int(metaphase_particle_type::unknown)},
-        {"arm", int(metaphase_particle_type::arm)},
-        {"centromere", int(metaphase_particle_type::centromere)},
+        {"unknown", int(mitotic_particle_type::unknown)},
+        {"arm", int(mitotic_particle_type::arm)},
+        {"kinetochore", int(mitotic_particle_type::kinetochore)},
     };
 
     std::vector<int> particle_types;
-    for (auto const& type : _metaphase_particle_types) {
+    for (auto const& type : _anatelophase.particles) {
         particle_types.push_back(int(type));
     }
 
+    std::vector<std::string> chain_names;
     std::vector<std::array<std::size_t, 2>> chain_ranges;
-    for (auto const& assign : _metaphase_chain_assignments) {
+    std::vector<std::size_t> kinetochore_beads;
+    for (auto const& assign : _anatelophase.chains) {
+        chain_names.push_back(assign.name);
         chain_ranges.push_back({ assign.start, assign.end });
+        kinetochore_beads.push_back(assign.kinetochore.value_or(-1));
     }
 
-    _store.dataset<h5::i32, 1>("/metadata/particle_types:metaphase", particle_types_enum).write(particle_types);
-    _store.dataset<h5::i32, 2>("/metadata/chain_ranges:metaphase").write(chain_ranges);
-    _store.dataset<h5::i32, 1>("/metadata/kinetochore_beads:metaphase").write(_metaphase_kinetochore_indices);
+    auto const make_anaphase_path = [](std::string const& key) {
+        return "/stages/anaphase/metadata/" + key;
+    };
+    auto const make_telophase_path = [](std::string const& key) {
+        return "/stages/telophase/metadata/" + key;
+    };
+    _store.dataset<h5::i32, 1>(make_anaphase_path("particle_types"), particle_types_enum).write(particle_types);
+    _store.dataset<h5::str, 1>(make_anaphase_path("chain_names")).write(chain_names);
+    _store.dataset<h5::i32, 2>(make_anaphase_path("chain_ranges")).write(chain_ranges);
+    _store.dataset<h5::i32, 1>(make_anaphase_path("kinetochore_beads")).write(kinetochore_beads);
+
+    // The anaphase and telophase stage share some metadata.
+    auto const share_metadata = [&, this](std::string const& key) {
+        h5_link_path(_store, make_anaphase_path(key), make_telophase_path(key));
+    };
+    share_metadata("particle_types");
+    share_metadata("chain_names");
+    share_metadata("chain_ranges");
+}
+
+// Writes parameters for the prometaphase particles.
+void
+init_pipeline::write_prometaphase_particles()
+{
+    // Store prometaphase datasets that define prometaphase particles and topology:
+    // - particle_types (*) enum
+    // - chain_names (*) str
+    // - chain_ranges (*, 2) int
+    // - kinetochore_beads (*) int
+    // - sister_chromatids (*) int
+    // - pole_positions (2, 3) float
+    // under the metadata group for the prometaphase stage.
+
+    h5::enums<int> const particle_types_enum = {
+        {"unknown", int(mitotic_particle_type::unknown)},
+        {"arm", int(mitotic_particle_type::arm)},
+        {"kinetochore", int(mitotic_particle_type::kinetochore)},
+    };
+
+    std::vector<int> particle_types;
+    for (auto const& type : _prometaphase.particles) {
+        particle_types.push_back(int(type));
+    }
+
+    std::vector<std::string> chain_names;
+    std::vector<std::array<std::size_t, 2>> chain_ranges;
+    std::vector<std::size_t> kinetochore_beads;
+    for (auto const& assign : _prometaphase.chains) {
+        chain_names.push_back(assign.name);
+        chain_ranges.push_back({ assign.start, assign.end });
+        kinetochore_beads.push_back(assign.kinetochore.value_or(-1));
+    }
+
+    std::vector<std::array<md::scalar, 3>> pole_positions;
+    for (auto const& position : _prometaphase.pole_positions) {
+        pole_positions.push_back({ position.x, position.y, position.z });
+    }
+
+    auto const make_path = [](std::string const& key) {
+        return "/stages/prometaphase/metadata/" + key;
+    };
+    _store.dataset<h5::i32, 1>(make_path("particle_types"), particle_types_enum).write(particle_types);
+    _store.dataset<h5::str, 1>(make_path("chain_names")).write(chain_names);
+    _store.dataset<h5::i32, 2>(make_path("chain_ranges")).write(chain_ranges);
+    _store.dataset<h5::i32, 1>(make_path("kinetochore_beads")).write(kinetochore_beads);
+    _store.dataset<h5::i32, 2>(make_path("sister_chromatids")).write(_prometaphase.sister_chromatids);
+    _store.dataset<h5::f32, 2>(make_path("pole_positions")).write(pole_positions);
 }
 
 
 // Derives and stores the random seed used in each simulation stage.
 void
-preparation_pipeline::write_seeds()
+init_pipeline::write_seeds()
 {
     std::seed_seq seed_seq = { _master_seed };
-    std::array<std::uint32_t, 2> seed_values;
+    std::array<std::uint32_t, 3> seed_values;
     seed_seq.generate(seed_values.begin(), seed_values.end());
 
-    _store.dataset<h5::u32>("/metadata/seed:metaphase").write(seed_values[0]);
-    _store.dataset<h5::u32>("/metadata/seed:interphase").write(seed_values[1]);
-}
-
-
-namespace
-{
-    void
-    link_dataset(h5::file& store, std::string const& dest, std::string const& name)
-    {
-        // Allow intermediate groups to be automatically created.
-        h5::unique_hid<H5Pclose> link_props = H5Pcreate(H5P_LINK_CREATE);
-        if (link_props < 0) {
-            throw std::runtime_error("failed to create link props");
-        }
-        if (H5Pset_create_intermediate_group(link_props, 1) < 0) {
-            throw std::runtime_error("failed to configure link props");
-        }
-
-        auto const ret = H5Lcreate_soft(
-            dest.c_str(), store.handle(), name.c_str(), link_props, H5P_DEFAULT
-        );
-        if (ret < 0) {
-            throw std::runtime_error("failed to create link " + name + " -> " + dest);
-        }
-    }
-}
-
-
-// Initializes simulation stages.
-void
-preparation_pipeline::write_stages()
-{
-    // Set up metadata datasets in each simulation stage (/stages/*/metadata).
-    // These are used in analysis scripts.
-
-    auto do_link = [this](
-        std::string const& stage,
-        std::string const& key,
-        std::string const& suffix = ""
-    ) {
-        link_dataset(
-            _store,
-            "/metadata/" + key + suffix,
-            "/stages/" + stage + "/metadata/" + key
-        );
+    auto const make_seed_path = [](std::string const& stage) {
+        return "/stages/" + stage + "/metadata/seed";
     };
-
-    std::initializer_list<std::string> const metaphase_stages = {"anaphase", "telophase"};
-    for (auto const& stage : metaphase_stages) {
-        do_link(stage, "particle_types", ":metaphase");
-        do_link(stage, "chain_names");
-        do_link(stage, "chain_ranges", ":metaphase");
-    }
-    do_link("anaphase", "kinetochore_beads", ":metaphase");
-
-    std::initializer_list<std::string> const standard_stages = {"relaxation", "interphase"};
-    for (auto const& stage : standard_stages) {
-        do_link(stage, "particle_types");
-        do_link(stage, "chain_names");
-        do_link(stage, "chain_ranges");
-        do_link(stage, "ab_factor");
-        do_link(stage, "nucleolar_bonds");
-    }
+    _store.dataset<h5::u32>(make_seed_path("anaphase")).write(seed_values[0]);
+    _store.dataset<h5::u32>(make_seed_path("interphase")).write(seed_values[1]);
+    _store.dataset<h5::u32>(make_seed_path("prometaphase")).write(seed_values[2]);
 }
 
 
@@ -495,5 +572,5 @@ prepare_simulation_store(
     std::uint32_t master_seed
 )
 {
-    preparation_pipeline(store, config, chains, master_seed).run();
+    init_pipeline(store, config, chains, master_seed).run();
 }

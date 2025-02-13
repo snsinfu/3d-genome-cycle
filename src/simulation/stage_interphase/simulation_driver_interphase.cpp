@@ -9,6 +9,7 @@ void
 simulation_driver::run_simulation()
 {
     _store.set_stage("interphase");
+    _store.clear_frames();
 
     // Note: No 
 
@@ -31,7 +32,7 @@ simulation_driver::run_simulation()
 
         if (with_sampling) {
             _store.save_positions(step, _system.view_positions());
-            _store.save_context(step, _context);
+            _store.save_interphase_context(step, _context);
         }
 
         if (step % _config.contactmap_update_interval == 0) {

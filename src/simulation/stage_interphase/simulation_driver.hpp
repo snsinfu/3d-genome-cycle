@@ -41,7 +41,7 @@ private:
     simulation_store&  _store;
     interphase_config  _config;
     interphase_design  _design;
-    simulation_context _context;
+    interphase_context _context;
     contact_map        _contact_map;
     md::system         _system;
     std::mt19937_64    _random;

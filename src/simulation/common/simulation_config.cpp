@@ -40,35 +40,47 @@ struct jsoncons::json_type_traits<Json, ab_factor_config>
 
 
 JSONCONS_N_MEMBER_TRAITS(
-    anatelophase_config,
+    mitotic_phase_config,
 
     // Required fields
     0,
 
     // Optional fields
-    coarse_graining,
-
     temperature,
     timestep,
-    dragging_steps,
-    packing_steps,
+    anaphase_steps,
+    telophase_steps,
+    prometaphase_steps,
     sampling_interval,
     logging_interval,
 
-    start_center,
-    start_stddev,
+    anaphase_start_stddev,
 
+    coarse_graining,
     core_diameter,
     core_repulsion,
     bond_length,
     bond_spring,
     bending_energy,
+    penalize_centromere_bending,
     core_mobility,
 
-    dragged_beads,
-    dragging_spring,
-    packing_radius,
-    packing_spring
+    sister_separation,
+    sister_spring,
+
+    spindle_axis,
+    kfiber_decay_rate_prometaphase,
+    kfiber_decay_rate_anaphase,
+    kfiber_length_prometaphase,
+    kfiber_length_anaphase,
+    polar_ejection_force,
+    polar_ejection_cross_section,
+
+    anaphase_spindle_shift,
+    telophase_packing_radius,
+    telophase_packing_spring,
+    telophase_bond_spring_multiplier,
+    telophase_bending_energy_multiplier
 )
 
 
@@ -131,7 +143,7 @@ JSONCONS_ALL_MEMBER_TRAITS(
     simulation_config,
 
     // Required fields
-    anatelophase,
+    mitotic_phase,
     interphase
 )
 

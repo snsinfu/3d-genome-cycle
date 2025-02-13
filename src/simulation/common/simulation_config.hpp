@@ -12,36 +12,49 @@ struct ab_factor_config
 };
 
 
-struct anatelophase_config
+struct mitotic_phase_config
 {
-    // Extra coarse-graining in the anatelophase simulation
-    md::index  coarse_graining = 100;
-
     // Overdamped Langevin dynamics
-    md::scalar temperature       = 1;
-    md::scalar timestep          = 1e-4;
-    md::step   dragging_steps    = 200000;
-    md::step   packing_steps     = 50000;
-    md::step   sampling_interval = 1000;
-    md::step   logging_interval  = 10000;
+    md::scalar temperature        = 1;
+    md::scalar timestep           = 1e-4;
+    md::step   anaphase_steps     = 200000;
+    md::step   telophase_steps    = 50000;
+    md::step   prometaphase_steps = 400000;
+    md::step   sampling_interval  = 1000;
+    md::step   logging_interval   = 10000;
 
     // Initialization
-    md::point  start_center = {0, 0, 5};
-    md::scalar start_stddev = 1;
+    md::scalar anaphase_start_stddev = 1;
 
-    // Repulsive polymer
-    md::scalar core_diameter  = 0.3;
-    md::scalar core_repulsion = 2;
-    md::scalar bond_length    = 0.3;
-    md::scalar bond_spring    = 1000;
-    md::scalar bending_energy = 0;
-    md::scalar core_mobility  = 1;
+    // Polymer chain
+    md::index  coarse_graining             = 100;
+    md::scalar core_diameter               = 0.3;
+    md::scalar core_repulsion              = 2;
+    md::scalar bond_length                 = 0.3;
+    md::scalar bond_spring                 = 1000;
+    md::scalar bending_energy              = 1;
+    bool       penalize_centromere_bending = false;
+    md::scalar core_mobility               = 0.1;
 
-    // Dragging
-    md::index  dragged_beads   = 3;
-    md::scalar dragging_spring = 1.5;
-    md::scalar packing_radius  = 1.2;
-    md::scalar packing_spring  = 10;
+    // Sister chromatids
+    md::scalar sister_separation = 0.3;
+    md::scalar sister_spring     = 1000;
+
+    // Field-approximated microtubules
+    md::vector spindle_axis                   = {0, 5, 0};
+    md::scalar kfiber_decay_rate_prometaphase = 1;
+    md::scalar kfiber_decay_rate_anaphase     = 1;
+    md::scalar kfiber_length_prometaphase     = 0;
+    md::scalar kfiber_length_anaphase         = 0;
+    md::scalar polar_ejection_force           = 0;
+    md::scalar polar_ejection_cross_section   = 0;
+
+    // Anatelophase modifications
+    md::vector anaphase_spindle_shift              = {0, 2, 0};
+    md::scalar telophase_packing_radius            = 1.5;
+    md::scalar telophase_packing_spring            = 100;
+    md::scalar telophase_bond_spring_multiplier    = 1;
+    md::scalar telophase_bending_energy_multiplier = 1;
 };
 
 
@@ -104,9 +117,9 @@ struct interphase_config
 
 struct simulation_config
 {
-    anatelophase_config anatelophase;
-    interphase_config   interphase;
-    std::string         source;
+    mitotic_phase_config mitotic_phase;
+    interphase_config    interphase;
+    std::string          source;
 };
 
 

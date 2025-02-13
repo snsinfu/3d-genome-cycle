@@ -29,15 +29,16 @@ def main(
         assembly = None
 
         # Load chain configurations
-        metadata = store["metadata"]
+        cycle_metadata = store["metadata"]
+        stage_metadata = store["stages/interphase/metadata"]
 
-        n_bins = len(metadata["particle_types"])
-        chain_names = [name.decode() for name in metadata["chain_names"]]
-        chain_ranges = metadata["chain_ranges"][:]
+        n_bins = len(stage_metadata["particle_types"])
+        chain_names = [name.decode() for name in stage_metadata["chain_names"]]
+        chain_ranges = stage_metadata["chain_ranges"][:]
 
         # Copy chromosomal bins from the simulation input (chains.tsv).
         chain_bins = pd.read_csv(
-            io.StringIO(metadata["chains_source"][()].decode()),
+            io.StringIO(cycle_metadata["chains_source"][()].decode()),
             sep="\t",
         )
 

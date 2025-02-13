@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <exception>
 #include <iostream>
+#include <map>
 #include <optional>
 #include <random>
 #include <stdexcept>
@@ -28,18 +29,18 @@ struct program_options
 };
 
 
-class usage_error : std::runtime_error
+class usage_error : public std::runtime_error
 {
 public:
     using std::runtime_error::runtime_error;
 };
 
 
-static program_options   parse_options(int argc, char** argv);
-static void              show_short_usage(std::ostream& out);
-static void              show_usage(std::ostream& out);
-static std::uint32_t     make_master_seed(program_options const& options);
-static simulation_config load_config(std::string const& filename);
+static program_options    parse_options(int argc, char** argv);
+static void               show_short_usage(std::ostream& out);
+static void               show_usage(std::ostream& out);
+static simulation_config  load_config(std::string const& filename);
+static std::uint32_t      make_master_seed(program_options const& options);
 
 
 int
@@ -73,7 +74,11 @@ main(int argc, char** argv)
 void
 show_short_usage(std::ostream& out)
 {
-    out << "usage: prepare [-s seed] -o <trajectory.h5> <config.json> <chains.tsv>\n";
+    out << R"(usage:
+  prepare init [-s seed] -o <trajectory.h5> <config.json> <chains.tsv>
+  prepare interphase <trajectory.h5>
+  prepare prometaphase <trajectory.h5>
+)";
 }
 
 
@@ -82,16 +87,19 @@ show_usage(std::ostream& out)
 {
     show_short_usage(out);
     out << R"(
-Create and prepare a trajectory file for a fresh simulation.
+Create and prepare a trajectory file.
 
-options:
-  -s seed           specify random seed (default: random)
-  -o trajectory.h5  trajectory file to create (required)
-  -h                show usage message and exit
+init options:
+  -s seed           Specify random seed (default: random)
+  -o trajectory.h5  Trajectory file to create (required)
+  -h                Show usage message and exit
 
-positional arguments:
+init positional arguments:
   config.json       Simulation parameters
   chains.tsv        TSV file specifying chromosome chains to be simulated
+
+interphase/prometaphase positional arguments:
+  trajectory.h5     Existing trajectory file to use
 )";
 }
 
@@ -100,22 +108,22 @@ program_options
 parse_options(int argc, char** argv)
 {
     program_options options;
-
     cxx::getopt getopt;
 
     for (int ch; (ch = getopt(argc, argv, "s:o:h")) != -1; ) {
         switch (ch) {
+        case 'h':
+            // Do not parse the remaining command-line if help is requested.
+            options.help = true;
+            return options;
+
         case 's':
-            options.seed = std::uint32_t(std::stoul(getopt.optarg));
+            options.seed = std::uint32_t(std::stol(getopt.optarg));
             break;
 
         case 'o':
             options.trajectory_filename = getopt.optarg;
             break;
-
-        case 'h':
-            options.help = true;
-            return options;
 
         default:
             throw usage_error("bad option");

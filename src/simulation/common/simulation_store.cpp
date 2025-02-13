@@ -34,7 +34,7 @@ namespace
 
 
 JSONCONS_ALL_MEMBER_TRAITS(
-    simulation_context,
+    interphase_context,
 
     time,
     wall_semiaxes,
@@ -42,6 +42,22 @@ JSONCONS_ALL_MEMBER_TRAITS(
     bond_scale,
     mean_energy,
     wall_energy
+)
+
+
+JSONCONS_ALL_MEMBER_TRAITS(
+    prometaphase_context::microtubule_record,
+
+    length,
+    oscillation_phase
+)
+
+
+JSONCONS_ALL_MEMBER_TRAITS(
+    prometaphase_context,
+
+    time,
+    microtubules
 )
 
 
@@ -67,13 +83,14 @@ simulation_store::load_config()
 }
 
 
-metaphase_design
-simulation_store::load_metaphase_design()
+anatelophase_design
+simulation_store::load_anatelophase_design()
 {
+    // Anaphase and telophase share the same design.
+    std::string const stage = "anaphase";
     return {
-        .seed              = load_seed(":metaphase"),
-        .chains            = load_chains(":metaphase"),
-        .kinetochore_beads = load_kinetochore_beads(),
+        .seed   = load_seed(stage),
+        .chains = load_chains(stage),
     };
 }
 
@@ -81,30 +98,79 @@ simulation_store::load_metaphase_design()
 interphase_design
 simulation_store::load_interphase_design()
 {
+    std::string const stage = "interphase";
     return {
-        .seed            = load_seed(":interphase"),
-        .particles       = load_interphase_particles(),
-        .chains          = load_chains(),
-        .nucleolar_bonds = load_nucleolar_bonds(),
+        .seed            = load_seed(stage),
+        .particles       = load_interphase_particles(stage),
+        .chains          = load_chains(stage),
+        .nucleolar_bonds = load_nucleolar_bonds(stage),
+    };
+}
+
+
+prometaphase_design
+simulation_store::load_prometaphase_design()
+{
+    std::string const stage = "prometaphase";
+    return {
+        .seed              = load_seed(stage),
+        .chains            = load_chains(stage),
+        .sister_chromatids = load_sister_chromatids(stage),
+        .pole_positions    = load_pole_positions(stage),
     };
 }
 
 
 void
-simulation_store::save_context(md::step step, simulation_context const& context)
+simulation_store::save_interphase_context(md::step step, interphase_context const& context)
 {
     std::string context_json;
     jsoncons::encode_json(context, context_json);
-    _store.dataset<h5::str>(make_stage_path(step, "context")).write(context_json);
+    _store.dataset<h5::str>(locate_data(step, "context")).write(context_json);
 }
 
 
-simulation_context
-simulation_store::load_context(md::step step)
+interphase_context
+simulation_store::load_interphase_context(md::step step)
 {
     std::string context_json;
-    _store.dataset<h5::str>(make_stage_path(step, "context")).read(context_json);
-    return jsoncons::decode_json<simulation_context>(context_json);
+    _store.dataset<h5::str>(locate_data(step, "context")).read(context_json);
+    return jsoncons::decode_json<interphase_context>(context_json);
+}
+
+
+void
+simulation_store::save_prometaphase_context(md::step step, prometaphase_context const& context)
+{
+    std::string context_json;
+    jsoncons::encode_json(context, context_json);
+    _store.dataset<h5::str>(locate_data(step, "context")).write(context_json);
+}
+
+
+prometaphase_context
+simulation_store::load_prometaphase_context(md::step step)
+{
+    std::string context_json;
+    _store.dataset<h5::str>(locate_data(step, "context")).read(context_json);
+    return jsoncons::decode_json<prometaphase_context>(context_json);
+}
+
+
+bool
+simulation_store::check_positions(md::step step)
+{
+    return bool(_store.dataset<h5::f32, 2>(locate_data(step, "positions")));
+}
+
+
+void
+simulation_store::clear_frames()
+{
+    if (auto dataset = _store.dataset<h5::str, 1>(locate_data(".steps"))) {
+        std::vector<std::string> empty;
+        dataset.write(empty);
+    }
 }
 
 
@@ -113,7 +179,7 @@ simulation_store::append_frame(md::step step)
 {
     std::vector<std::string> frame_index;
 
-    auto dataset = _store.dataset<h5::str, 1>(make_stage_path(".steps"));
+    auto dataset = _store.dataset<h5::str, 1>(locate_data(".steps"));
     if (dataset) {
         dataset.read_fit(frame_index);
     }
@@ -130,7 +196,7 @@ simulation_store::save_positions(
 {
     // Quantize coordinate values for better compression. Five significant
     // digits ought to be sufficient for genome-wide simulation, so use
-    // 16 bits.
+    // log2(10^5) ~ 16 bits.
     constexpr int fraction_bits = 16;
     constexpr int compression_level = 6;
 
@@ -143,10 +209,28 @@ simulation_store::save_positions(
         });
     }
 
-    _store.dataset<h5::f32, 2>(make_stage_path(step, "positions")).write(
+    _store.dataset<h5::f32, 2>(locate_data(step, "positions")).write(
         positions_array,
         {.compression = compression_level, .scaleoffset = {}}
     );
+}
+
+
+std::vector<md::step>
+simulation_store::load_steps()
+{
+    std::vector<md::step> steps;
+
+    // FIXME: Why strings?
+    if (auto dataset = _store.dataset<h5::str, 1>(locate_data(".steps"))) {
+        std::vector<std::string> step_keys;
+        dataset.read_fit(step_keys);
+        for (auto const& step_key : step_keys) {
+            steps.push_back(std::stol(step_key));
+        }
+    }
+
+    return steps;
 }
 
 
@@ -154,7 +238,7 @@ std::vector<md::point>
 simulation_store::load_positions(md::step step)
 {
     std::vector<std::array<md::scalar, 3>> coords_array;
-    _store.dataset<h5::f32, 2>(make_stage_path(step, "positions")).read_fit(coords_array);
+    _store.dataset<h5::f32, 2>(locate_data(step, "positions")).read_fit(coords_array);
 
     std::vector<md::point> positions;
     positions.reserve(coords_array.size());
@@ -175,28 +259,30 @@ simulation_store::save_contacts(
         return;
     }
 
-    _store.dataset<h5::i32, 2>(make_stage_path(step, "contacts")).write(
+    // Integral values compresses pretty good with the adaptive (zero)
+    // scaleoffset filter.
+    _store.dataset<h5::i32, 2>(locate_data(step, "contacts")).write(
         contacts, {.compression = 4, .scaleoffset = 0}
     );
 }
 
 
 std::uint64_t
-simulation_store::load_seed(std::string suffix)
+simulation_store::load_seed(std::string const& stage)
 {
     std::uint64_t value;
-    _store.dataset<h5::u64>("/metadata/seed" + suffix).read(value);
+    _store.dataset<h5::u64>("/stages/" + stage + "/metadata/seed").read(value);
     return value;
 }
 
 
 std::vector<chain_range>
-simulation_store::load_chains(std::string suffix)
+simulation_store::load_chains(std::string const& stage)
 {
     std::vector<std::string> chain_names;
     std::vector<std::array<md::index, 2>> chain_ranges;
-    _store.dataset<h5::str, 1>("/metadata/chain_names").read_fit(chain_names);
-    _store.dataset<h5::u32, 2>("/metadata/chain_ranges" + suffix).read_fit(chain_ranges);
+    _store.dataset<h5::str, 1>(locate_metadata_in(stage, "chain_names")).read_fit(chain_names);
+    _store.dataset<h5::u32, 2>(locate_metadata_in(stage, "chain_ranges")).read_fit(chain_ranges);
 
     std::vector<chain_range> chains;
     for (std::size_t i = 0; i < chain_ranges.size(); i++) {
@@ -207,24 +293,29 @@ simulation_store::load_chains(std::string suffix)
         });
     }
 
+    auto kinetochore_dataset = _store.dataset<h5::u32, 1>(locate_metadata_in(stage, "kinetochore_beads"));
+    if (kinetochore_dataset) {
+        std::vector<md::index> kinetochore_beads;
+        kinetochore_dataset.read_fit(kinetochore_beads);
+
+        if (kinetochore_beads.size() != chains.size()) {
+            throw simulation_store_error("chains and kinetochore_beads datasets mismatch");
+        }
+
+        for (md::index i = 0; i < chains.size(); i++) {
+            chains[i].kinetochore = kinetochore_beads[i];
+        }
+    }
+
     return chains;
 }
 
 
-std::vector<md::index>
-simulation_store::load_kinetochore_beads()
-{
-    std::vector<md::index> indices;
-    _store.dataset<h5::u32, 1>("/metadata/kinetochore_beads:metaphase").read_fit(indices);
-    return indices;
-}
-
-
 std::vector<nucleolar_bond>
-simulation_store::load_nucleolar_bonds()
+simulation_store::load_nucleolar_bonds(std::string const& stage)
 {
     std::vector<std::array<md::index, 2>> index_pairs;
-    _store.dataset<h5::u32, 2>("/metadata/nucleolar_bonds").read_fit(index_pairs);
+    _store.dataset<h5::u32, 2>(locate_metadata_in(stage, "nucleolar_bonds")).read_fit(index_pairs);
 
     std::vector<nucleolar_bond> bonds;
     for (auto const& pair : index_pairs) {
@@ -239,10 +330,10 @@ simulation_store::load_nucleolar_bonds()
 
 
 std::vector<particle_data>
-simulation_store::load_interphase_particles()
+simulation_store::load_interphase_particles(std::string const& stage)
 {
     std::vector<std::array<md::scalar, 2>> ab_factors;
-    _store.dataset<h5::f32, 2>("/metadata/ab_factors").read_fit(ab_factors);
+    _store.dataset<h5::f32, 2>(locate_metadata_in(stage, "ab_factors")).read_fit(ab_factors);
 
     std::vector<particle_data> particles;
     for (auto const& ab : ab_factors) {
@@ -256,15 +347,49 @@ simulation_store::load_interphase_particles()
 }
 
 
-std::string
-simulation_store::make_stage_path(std::string sub_path) const
+std::vector<std::array<std::size_t, 2>>
+simulation_store::load_sister_chromatids(std::string const& stage)
 {
-    return "/stages/" + _stage + "/" + sub_path;
+    std::vector<std::array<std::size_t, 2>> sister_chromatids;
+    _store.dataset<h5::u32, 2>(locate_metadata_in(stage, "sister_chromatids")).read_fit(sister_chromatids);
+    return sister_chromatids;
+}
+
+
+std::array<md::point, 2>
+simulation_store::load_pole_positions(std::string const& stage)
+{
+    std::vector<std::array<md::scalar, 3>> pole_positions;
+    _store.dataset<h5::f32, 2>(locate_metadata_in(stage, "pole_positions")).read_fit(pole_positions);
+    if (pole_positions.size() != 2) {
+        throw simulation_store_error("unexpected pole_positions shape");
+    }
+    auto const coords_to_point = [](std::array<md::scalar, 3> const& coords) -> md::point {
+        return { coords[0], coords[1], coords[2] };
+    };
+    return {
+        coords_to_point(pole_positions[0]),
+        coords_to_point(pole_positions[1]),
+    };
 }
 
 
 std::string
-simulation_store::make_stage_path(md::step step, std::string sub_path) const
+simulation_store::locate_metadata_in(std::string const& stage, std::string const& key) const
 {
-    return make_stage_path(std::to_string(step) + "/" + sub_path);
+    return "/stages/" + stage + "/metadata/" + key;
+}
+
+
+std::string
+simulation_store::locate_data(std::string const& key) const
+{
+    return "/stages/" + _stage + "/" + key;
+}
+
+
+std::string
+simulation_store::locate_data(md::step step, std::string const& key) const
+{
+    return locate_data(std::to_string(step) + "/" + key);
 }

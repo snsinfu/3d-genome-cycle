@@ -9,6 +9,7 @@ void
 simulation_driver::run_relaxation()
 {
     _store.set_stage("relaxation");
+    _store.clear_frames();
 
     // Load initial structure.
     {
@@ -37,7 +38,7 @@ simulation_driver::run_relaxation()
 
         if (with_sampling) {
             _store.save_positions(step, _system.view_positions());
-            _store.save_context(step, _context);
+            _store.save_interphase_context(step, _context);
             _store.append_frame(step);
         }
     };

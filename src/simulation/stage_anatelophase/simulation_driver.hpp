@@ -28,16 +28,19 @@ private:
     void run_initialization();
     void run_dragging_stage();
     void run_packing_stage();
-    void run_refinement();
 
     void print_progress(std::string const& stage, md::step step);
 
 private:
     simulation_store&               _store;
-    anatelophase_config             _config;
-    metaphase_design                _design;
+    mitotic_phase_config            _config;
+    anatelophase_design             _design;
     md::system                      _system;
     std::mt19937_64                 _random;
     std::shared_ptr<md::forcefield> _dragging_forcefield;
     std::shared_ptr<md::forcefield> _packing_forcefield;
+    std::shared_ptr<md::forcefield> _anaphase_bonding_forcefield;
+    std::shared_ptr<md::forcefield> _anaphase_bending_forcefield;
+    std::shared_ptr<md::forcefield> _telophase_bonding_forcefield;
+    std::shared_ptr<md::forcefield> _telophase_bending_forcefield;
 };

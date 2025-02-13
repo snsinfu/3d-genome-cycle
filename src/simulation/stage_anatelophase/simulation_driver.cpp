@@ -1,3 +1,6 @@
+#include "simulation_driver.hpp"
+
+#include <algorithm>
 #include <ctime>
 #include <iomanip>
 #include <iostream>
@@ -7,7 +10,7 @@
 
 #include <md.hpp>
 
-#include "simulation_driver.hpp"
+#include "../common/forcefield/kinetochore_fiber_forcefield.hpp"
 
 
 namespace
@@ -32,8 +35,8 @@ namespace
 
 simulation_driver::simulation_driver(simulation_store& store)
 : _store(store)
-, _config(store.load_config().anatelophase)
-, _design(store.load_metaphase_design())
+, _config(store.load_config().mitotic_phase)
+, _design(store.load_anatelophase_design())
 , _random(_design.seed)
 {
     setup();
@@ -93,44 +96,79 @@ simulation_driver::setup_connectivity_forcefield()
 {
     // Spring bonds and bending cost.
 
-    auto bonds = _system.add_forcefield(
-        md::make_bonded_pairwise_forcefield(
+    auto make_bonding_forcefield = [this](md::scalar bond_spring) {
+        auto bonds = md::make_bonded_pairwise_forcefield(
             md::semispring_potential {
-                .spring_constant      = _config.bond_spring,
+                .spring_constant      = bond_spring,
                 .equilibrium_distance = _config.bond_length,
             }
-        )
+        );
+        for (auto const& chain : _design.chains) {
+            bonds.add_bonded_range(chain.start, chain.end);
+        }
+        return copy_shared(bonds);
+    };
+
+    _anaphase_bonding_forcefield = make_bonding_forcefield(
+        _config.bond_spring
+    );
+    _telophase_bonding_forcefield = make_bonding_forcefield(
+        _config.bond_spring * _config.telophase_bond_spring_multiplier
     );
 
-    auto bends = _system.add_forcefield(
-        md::make_bonded_triplewise_forcefield(
+    auto make_bending_forcefield = [this](md::scalar bending_energy) {
+        auto bends = md::make_bonded_triplewise_forcefield(
             md::cosine_bending_potential {
-                .bending_energy = _config.bending_energy,
+                .bending_energy = bending_energy,
             }
-        )
+        );
+        for (auto const& chain : _design.chains) {
+            if (_config.penalize_centromere_bending) {
+                bends.add_bonded_range(chain.start, chain.end);
+            } else {
+                bends.add_bonded_range(chain.start, chain.kinetochore);
+                bends.add_bonded_range(chain.kinetochore + 1, chain.end);
+            }
+        }
+        return copy_shared(bends);
+    };
+
+    _anaphase_bending_forcefield = make_bending_forcefield(
+        _config.bending_energy
+    );
+    _telophase_bending_forcefield = make_bending_forcefield(
+        _config.bending_energy * _config.telophase_bending_energy_multiplier
     );
 
-    for (auto const& chain : _design.chains) {
-        bonds->add_bonded_range(chain.start, chain.end);
-        bends->add_bonded_range(chain.start, chain.end);
-    }
+    // Forcefield will switch when transitioning from anaphase to telpohase.
+    _system.add_forcefield(_anaphase_bonding_forcefield);
+    _system.add_forcefield(_anaphase_bending_forcefield);
 }
 
 
 void
 simulation_driver::setup_dragging_forcefield()
 {
-    // Spindle core attracts centromeres.
+    kinetochore_fiber_forcefield kfiber_forcefield;
 
-    _dragging_forcefield = copy_shared(
-        md::make_point_source_forcefield(
-            md::harmonic_potential {
-                .spring_constant = _config.dragging_spring,
-            }
-        )
-        .set_point_source({0, 0, 0})
-        .set_point_source_targets(_design.kinetochore_beads)
-    );
+    md::point const origin = {0, 0, 0};
+    md::point const pole_position = origin + _config.anaphase_spindle_shift;
+    kfiber_forcefield.set_pole_position(pole_position);
+
+    auto const compute_mobility = [](md::scalar bead_mobility, chain_range const& chain) {
+        return bead_mobility / md::scalar(chain.end - chain.start);
+    };
+
+    for (auto const& chain : _design.chains) {
+        kfiber_forcefield.add_kinetochore({
+            .particle_index    = chain.kinetochore,
+            .mobility          = compute_mobility(_config.core_mobility, chain),
+            .decay_rate        = _config.kfiber_decay_rate_anaphase,
+            .stationary_length = _config.kfiber_length_anaphase,
+        });
+    }
+
+    _dragging_forcefield = copy_shared(kfiber_forcefield);
 }
 
 
@@ -142,8 +180,8 @@ simulation_driver::setup_packing_forcefield()
     _packing_forcefield = copy_shared(
         md::make_point_source_forcefield(
             md::semispring_potential {
-                .spring_constant      = _config.packing_spring,
-                .equilibrium_distance = _config.packing_radius,
+                .spring_constant      = _config.telophase_packing_spring,
+                .equilibrium_distance = _config.telophase_packing_radius,
             }
         )
         .set_point_source({0, 0, 0})
@@ -154,10 +192,12 @@ simulation_driver::setup_packing_forcefield()
 void
 simulation_driver::run()
 {
+    _store.clear_frames();
+    _store.set_stage("anaphase");
+
     run_initialization();
     run_dragging_stage();
     run_packing_stage();
-    run_refinement();
 
     std::clog << "Finished.\n";
 }
@@ -166,13 +206,25 @@ simulation_driver::run()
 void
 simulation_driver::run_initialization()
 {
-    // Initialize chains as randomly-directed rods.
     auto positions = _system.view_positions();
+
+    // Initial structure may be given.
+    if (_store.check_positions(0)) {
+        auto const init_positions = _store.load_positions(0);
+        if (init_positions.size() != positions.size()) {
+            throw std::runtime_error("initial structure size mismatch");
+        }
+        std::copy(init_positions.begin(), init_positions.end(), positions.begin());
+        return;
+    }
+
+    // Initialize chains as randomly-directed rods.
+    md::point const origin = {};
+    md::point const start_center = origin - _config.spindle_axis;
 
     for (auto const& chain : _design.chains) {
         auto const centroid =
-            _config.start_center
-            + _config.start_stddev * normal_vector(_random);
+            start_center + _config.anaphase_start_stddev * normal_vector(_random);
         auto const step =
             _config.bond_length * md::normalize(normal_vector(_random));
 
@@ -210,7 +262,7 @@ simulation_driver::run_dragging_stage()
     md::simulate_brownian_dynamics(_system, {
         .temperature = _config.temperature,
         .timestep    = _config.timestep,
-        .steps       = _config.dragging_steps,
+        .steps       = _config.anaphase_steps,
         .seed        = _random(),
         .callback    = callback,
     });
@@ -220,8 +272,17 @@ simulation_driver::run_dragging_stage()
 void
 simulation_driver::run_packing_stage()
 {
-    // Enable packing force.
+    // Microtubules detach from kinetochores and nuclear membrane forms. Turn
+    // the dragging force off and enable packing force.
+    _system.remove_forcefield(_dragging_forcefield);
     _system.add_forcefield(_packing_forcefield);
+
+    // The rigidity of chain would change because of dissociation of condensin
+    // from chromosomes during telophase.
+    _system.remove_forcefield(_anaphase_bonding_forcefield);
+    _system.remove_forcefield(_anaphase_bending_forcefield);
+    _system.add_forcefield(_telophase_bonding_forcefield);
+    _system.add_forcefield(_telophase_bending_forcefield);
 
     // Save snapshots under /stages/telophase hierarchy.
     _store.set_stage("telophase");
@@ -242,7 +303,7 @@ simulation_driver::run_packing_stage()
     md::simulate_brownian_dynamics(_system, {
         .temperature = _config.temperature,
         .timestep    = _config.timestep,
-        .steps       = _config.packing_steps,
+        .steps       = _config.telophase_steps,
         .seed        = _random(),
         .callback    = callback,
     });

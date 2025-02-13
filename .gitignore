@@ -10,8 +10,10 @@ _*
 # Artifacts
 *.o
 /src/simulation/prepare
+/src/simulation/transition
 /src/simulation/anatelophase
 /src/simulation/interphase
+/src/simulation/prometaphase
 
 # Junks
 Untitled*.ipynb

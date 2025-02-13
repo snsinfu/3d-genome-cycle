@@ -32,18 +32,28 @@ INCLUDES = \
 LIBS = \
   -lhdf5
 
-COMMON_SOURCES       = $(wildcard common/*.cpp)
+COMMON_SOURCES       = $(wildcard common/*.cpp) $(wildcard common/forcefield/*.cpp)
 PREPARE_SOURCES      = $(COMMON_SOURCES) $(wildcard stage_prepare/*.cpp)
+TRANSITION_SOURCES   = $(COMMON_SOURCES) $(wildcard stage_transition/*.cpp)
 ANATELOPHASE_SOURCES = $(COMMON_SOURCES) $(wildcard stage_anatelophase/*.cpp)
 INTERPHASE_SOURCES   = $(COMMON_SOURCES) $(wildcard stage_interphase/*.cpp)
+PROMETAPHASE_SOURCES = $(COMMON_SOURCES) $(wildcard stage_prometaphase/*.cpp)
 
-SOURCES = $(sort $(PREPARE_SOURCES) $(ANATELOPHASE_SOURCES) $(INTERPHASE_SOURCES))
+SOURCES = $(sort \
+    $(PREPARE_SOURCES) \
+    $(TRANSITION_SOURCES) \
+    $(ANATELOPHASE_SOURCES) \
+    $(INTERPHASE_SOURCES) \
+    $(PROMETAPHASE_SOURCES) \
+  )
 OBJECTS = $(SOURCES:.cpp=.o)
 
 PRODUCTS = \
   prepare \
+  transition \
   anatelophase \
-  interphase
+  interphase \
+  prometaphase
 
 ARTIFACTS = \
   $(PRODUCTS) \
@@ -67,10 +77,16 @@ depends:
 prepare: $(PREPARE_SOURCES:.cpp=.o)
 	$(CXX) $(CXXFLAGS) $(LDFLAGS) -o $@ $^ $(LIBS)
 
+transition: $(TRANSITION_SOURCES:.cpp=.o)
+	$(CXX) $(CXXFLAGS) $(LDFLAGS) -o $@ $^ $(LIBS)
+
 anatelophase: $(ANATELOPHASE_SOURCES:.cpp=.o)
 	$(CXX) $(CXXFLAGS) $(LDFLAGS) -o $@ $^ $(LIBS)
 
 interphase: $(INTERPHASE_SOURCES:.cpp=.o)
+	$(CXX) $(CXXFLAGS) $(LDFLAGS) -o $@ $^ $(LIBS)
+
+prometaphase: $(PROMETAPHASE_SOURCES:.cpp=.o)
 	$(CXX) $(CXXFLAGS) $(LDFLAGS) -o $@ $^ $(LIBS)
 
 -include _depends.mk
